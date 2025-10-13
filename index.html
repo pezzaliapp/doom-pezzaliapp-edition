@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>DOOM PezzaliAPP Edition — PWA</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#0a0f1f">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./ui.css">
+  <style>body{margin:0;background:#0a0f1f;color:#eaf0ff;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial}</style>
+</head>
+<body>
+  <header class="bar">
+    <h1>DOOM PezzaliAPP Edition</h1>
+    <button id="btnInstall" hidden>Installa</button>
+  </header>
+
+  <main class="wrap">
+    <canvas id="screen" width="640" height="400" tabindex="0" aria-label="Schermo di gioco"></canvas>
+
+    <section class="panel">
+      <div class="row">
+        <input type="file" id="wadInput" accept=".wad,.WAD" />
+        <button id="loadShareware">Usa WAD shareware (carica file)</button>
+        <button id="btnStart" disabled>Avvia</button>
+      </div>
+      <p class="muted">
+        Carica <strong>doom1.wad</strong> (shareware) o i tuoi IWAD legali (DOOM/DOOM II) o <strong>Freedoom</strong>.
+        I dati restano sul tuo device (OPFS/IndexedDB) per l’uso offline.
+      </p>
+      <div id="banner" class="banner warn" hidden></div>
+
+      <details>
+        <summary>Controlli</summary>
+        <ul>
+          <li>WASD/↑↓←→ per muoversi</li>
+          <li>Spazio: usa/apri · Ctrl: fuoco · Esc: menu</li>
+          <li>Mobile: overlay touch + Gamepad (se disponibile)</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <!-- Touch overlay -->
+  <div class="touch" id="touchUI" aria-hidden="true">
+    <div class="stick" id="stickL" data-type="move">
+      <div class="nub"></div>
+    </div>
+    <div class="buttons">
+      <button class="btn" data-key="ControlLeft" aria-label="Fuoco">A</button>
+      <button class="btn" data-key="Space" aria-label="Usa/Apri">B</button>
+      <button class="btn small" data-key="Escape" aria-label="Menu">▦</button>
+    </div>
+  </div>
+
+  <script src="./wasm-glue.js"></script>
+  <script src="./app.js" type="module"></script>
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');</script>
+</body>
+</html>

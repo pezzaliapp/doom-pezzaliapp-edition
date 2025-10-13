@@ -1,0 +1,20 @@
+/* ui.css — minimal + touch + banner */
+.bar{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#0e1430;border-bottom:1px solid #1a2555}
+.wrap{display:grid;gap:12px;padding:14px;max-width:960px;margin:0 auto}
+#screen{width:100%;height:auto;display:block;background:#000;outline:none}
+.panel{background:#0e1430;border:1px solid #1a2555;border-radius:10px;padding:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.muted{color:#9db0d9}
+button,input[type=file]{background:#1a2555;color:#eaf0ff;border:0;padding:8px 12px;border-radius:8px}
+button:disabled{opacity:.5}
+button:hover{filter:brightness(1.1)}
+.banner{margin-top:10px;padding:10px;border-radius:8px}
+.warn{background:#321f0a;border:1px solid #8a5d1a;color:#ffd7a1}
+
+/* Touch overlay */
+.touch{position:fixed;inset:0;pointer-events:none}
+.stick{position:absolute;left:16px;bottom:16px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.15);pointer-events:auto;touch-action:none}
+.stick .nub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25)}
+.buttons{position:absolute;right:16px;bottom:16px;display:flex;gap:12px;pointer-events:auto}
+.btn{width:70px;height:70px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#eaf0ff;font-weight:700;font-size:18px}
+.btn.small{width:56px;height:56px;font-size:16px}
