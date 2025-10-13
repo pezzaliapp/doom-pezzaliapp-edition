@@ -1,0 +1,54 @@
+name: Build DOOM Engine (WASM) and Update /engine
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-engine.yml"
+
+jobs:
+  build-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-key: emsdk-cache
+
+      - name: Get PrBoom+ sources
+        run: |
+          git clone --depth=1 https://github.com/coelckers/prboom-plus.git prboom-plus
+
+      - name: Configure (Emscripten CMake)
+        working-directory: prboom-plus
+        run: |
+          mkdir build-web && cd build-web
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -DOPENGL=OFF -DSDL2=ON
+
+      - name: Build
+        working-directory: prboom-plus/build-web
+        run: emmake make -j
+
+      - name: Copy artifacts to /engine
+        shell: bash
+        run: |
+          WASM=$(find prboom-plus/build-web -name "*.wasm" | head -n1)
+          JS=$(find prboom-plus/build-web -name "*.js"   | head -n1)
+          test -n "$WASM" && test -n "$JS"
+          mkdir -p engine
+          cp "$JS"   engine/engine.js
+          cp "$WASM" engine/engine.wasm
+
+      - name: Commit updated engine
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add engine/engine.js engine/engine.wasm
+          if git diff --cached --quiet; then
+            echo "No changes"; exit 0
+          fi
+          git commit -m "chore(engine): auto-build PrBoom wasm"
+          git push
