@@ -1,54 +1,73 @@
-// wasm-glue.js — loader compatibile con script "classico" Emscripten
+// wasm-glue.js — compatibile con Emscripten "modularized" e "classic autoboot"
 (function(){
   function loadClassicScript(src){
     return new Promise((resolve, reject)=>{
       const s = document.createElement('script');
-      s.src = src; s.async = true; s.onload = ()=>resolve(); s.onerror = e=>reject(e);
+      s.src = src; s.async = true;
+      s.onload = ()=>resolve();
+      s.onerror = e=>reject(e);
       document.head.appendChild(s);
     });
   }
 
-  const Runner = {
-    engineLoaded: false,
-    ModuleFactory: null,
-    async ensureEngine(){
-      if (this.engineLoaded) return true;
-      try{
-        await loadClassicScript('./engine/engine.js');
-        if (typeof window.createDoomModule !== 'function' && typeof window.Module === 'undefined') {
-          throw new Error('Engine JS caricato ma non espone createDoomModule/Module');
+  async function startClassic(iwadBytes){
+    // PREP: definiamo Module PRIMA di caricare engine.js
+    const canvas = document.getElementById('screen');
+
+    // Emscripten autoboot userà questi campi
+    window.Module = {
+      noInitialRun: false,                   // lascia che parta da solo
+      canvas,
+      print: (t)=>console.log(t),
+      printErr: (t)=>console.error(t),
+      locateFile: (path) => path.endsWith('.wasm') ? './engine/engine.wasm' : path,
+      preRun: [(mod)=>{
+        try{ mod.FS.mkdir('/data'); }catch{}
+        if (iwadBytes && iwadBytes.length){
+          mod.FS.writeFile('/data/doom1.wad', iwadBytes);
         }
-        this.ModuleFactory = window.createDoomModule || (opts => (window.Module || opts));
-        this.engineLoaded = true;
-        return true;
-      }catch(err){
-        console.warn('Engine non trovato:', err);
-        return false;
-      }
-    },
+        // Passiamo gli argomenti PRIMA dell'avvio
+        mod.arguments = ['-iwad','/data/doom1.wad'];
+      }]
+    };
+
+    await loadClassicScript('./engine/engine.js'); // questo farà partire il main() da solo
+  }
+
+  async function startModular(iwadBytes){
+    // Carichiamo lo script che espone createDoomModule
+    await loadClassicScript('./engine/engine.js');
+    if (typeof window.createDoomModule !== 'function') {
+      throw new Error('createDoomModule non trovato (build non modularizzata?)');
+    }
+    const canvas = document.getElementById('screen');
+    const Module = await window.createDoomModule({
+      canvas,
+      print: (t)=>console.log(t),
+      printErr: (t)=>console.error(t),
+      noInitialRun: true,
+      locateFile: (path) => path.endsWith('.wasm') ? './engine/engine.wasm' : path,
+      preRun: [(mod)=>{
+        try{ mod.FS.mkdir('/data'); }catch{}
+        if (iwadBytes && iwadBytes.length){
+          mod.FS.writeFile('/data/doom1.wad', iwadBytes);
+        }
+      }]
+    });
+    const args = ['-iwad','/data/doom1.wad'];
+    if (Module.callMain) Module.callMain(args);
+    else if (typeof Module._main === 'function') Module._main(args.length, 0);
+  }
+
+  const Runner = {
     async start(iwadBytes){
-      const ok = await this.ensureEngine();
-      if (!ok) throw new Error('Motore WASM mancante: copia engine/engine.js e engine.wasm');
-
-      const canvas = document.getElementById('screen');
-      const Module = await this.ModuleFactory({
-        canvas,
-        print: (t)=>console.log(t),
-        printErr: (t)=>console.error(t),
-        noInitialRun: true,
-        onAbort: (r)=>console.error('Abort:', r),
-        locateFile: (path) => path.endsWith('.wasm') ? './engine/engine.wasm' : path,
-        preRun: [(mod)=>{
-          if (iwadBytes && iwadBytes.length){
-            try{ mod.FS.mkdir('/data'); }catch{}
-            mod.FS.writeFile('/data/doom1.wad', iwadBytes);
-          }
-        }]
-      });
-
-      const args = ['/bin/doom','-iwad','/data/doom1.wad'];
-      if (Module.callMain) Module.callMain(args);
-      else if (typeof Module._main === 'function') Module._main(args.length, 0);
+      // Prova prima modular, altrimenti classic autoboot
+      try {
+        await startModular(iwadBytes);
+      } catch (e) {
+        console.warn('Modular build non rilevata, passo alla classic:', e.message||e);
+        await startClassic(iwadBytes);
+      }
     }
   };
 
