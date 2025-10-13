@@ -1,4 +1,4 @@
-name: Build DOOM Engine (WASM) and Update /engine
+name: Build Chocolate Doom (WASM) -> /engine
 
 on:
   workflow_dispatch:
@@ -14,72 +14,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-engine:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
-          no-cache: false
 
-      - name: Install autotools toolchain
+      - name: Install autotools
         run: |
           sudo apt-get update
           sudo apt-get install -y autoconf automake libtool pkg-config
 
-      - name: Show emsdk version (debug)
-        run: emcc -v
-
-      - name: Get Chocolate Doom sources
-        run: |
-          git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git chocolate-doom
+      - name: Clone Chocolate Doom
+        run: git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
 
       - name: Bootstrap (autoreconf)
         working-directory: chocolate-doom
-        run: |
-          autoreconf -fiv
+        run: autoreconf -fiv
 
-      - name: Configure (emconfigure)
+      - name: Configure (Emscripten)
         working-directory: chocolate-doom
         env:
+          CC: emcc
+          CXX: em++
+          AR: emar
+          RANLIB: emranlib
           CFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
           CXXFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
           LDFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
+          ac_cv_func_malloc_0_nonnull: "yes"
+          ac_cv_func_realloc_0_nonnull: "yes"
+          SDL2_CONFIG: ""
         run: |
-          emconfigure ./configure --disable-opengl
+          emconfigure ./configure --disable-opengl --host=wasm32-unknown-emscripten
 
-      - name: Build (emmake)
+      - name: Build (doom target)
         working-directory: chocolate-doom
         run: |
-          emmake make -j 4
+          emmake make -j2 -C src/doom
 
       - name: Locate wasm/js artifacts
-        id: find_outputs
+        id: out
         shell: bash
         run: |
           set -e
-          # in Chocolate Doom i binari per i vari sottoprogetti sono generati sotto ./src/*/
-          JS=$(find chocolate-doom -type f -name "*.js"   | head -n1 || true)
-          WASM=$(find chocolate-doom -type f -name "*.wasm"| head -n1 || true)
+          JS=$(find chocolate-doom/src/doom -type f -name "*.js"   | head -n1 || true)
+          WASM=$(find chocolate-doom/src/doom -type f -name "*.wasm"| head -n1 || true)
           echo "Found JS:   $JS"
           echo "Found WASM: $WASM"
-          echo "js=$JS"     >> $GITHUB_OUTPUT
-          echo "wasm=$WASM" >> $GITHUB_OUTPUT
-          if [ -z "$JS" ] || [ -z "$WASM" ]; then
-            echo "✗ Non ho trovato gli output .js/.wasm. Controlla lo step 'Build (emmake)' per dettagli."
-            exit 1
-          fi
+          echo "js=$JS"     >> "$GITHUB_OUTPUT"
+          echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
+          test -n "$JS" && test -n "$WASM"
 
       - name: Copy to /engine (repo root)
         run: |
           mkdir -p engine
-          cp "${{ steps.find_outputs.outputs.js }}"   engine/engine.js
-          cp "${{ steps.find_outputs.outputs.wasm }}" engine/engine.wasm
+          cp "${{ steps.out.outputs.js }}"   engine/engine.js
+          cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
           ls -lh engine/
 
       - name: Commit updated engine
@@ -88,8 +85,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add engine/engine.js engine/engine.wasm
           if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-          git commit -m "chore(engine): auto-build Chocolate Doom wasm"
+            echo "No changes"; exit 0; fi
+          git commit -m "Update engine (Chocolate Doom, wasm)"
           git push
