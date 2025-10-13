@@ -2,14 +2,11 @@ name: Build Chocolate Doom (WASM) → /engine
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,48 +18,37 @@ jobs:
           ./emsdk install latest
           ./emsdk activate latest
           source ./emsdk_env.sh
-        shell: bash
+          echo "source $(pwd)/emsdk_env.sh" >> $GITHUB_ENV
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential automake autoconf libtool pkg-config libsdl2-dev libsdl2-mixer-dev
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-mixer-dev
 
       - name: Clone Chocolate Doom
         run: |
           git clone https://github.com/chocolate-doom/chocolate-doom.git
           cd chocolate-doom
-          ./bootstrap
-
-      - name: Configure (Emscripten)
-        run: |
-          source emsdk/emsdk_env.sh
-          cd chocolate-doom
-          emconfigure ./configure --disable-opengl --enable-sdl2
-
-      - name: Build (WASM target)
-        run: |
-          source emsdk/emsdk_env.sh
-          cd chocolate-doom
-          emmake make
-        shell: bash
+          mkdir build
+          cd build
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
+          emmake ninja
 
       - name: Locate wasm/js artifacts
         run: |
-          echo "Search for build outputs..."
-          find chocolate-doom -type f \( -name "*.wasm" -o -name "*.js" \)
+          WASM_FILE=$(find chocolate-doom/build -name "*.wasm" | head -n 1)
+          JS_FILE=$(find chocolate-doom/build -name "*.js" | head -n 1)
+          if [ -z "$WASM_FILE" ] || [ -z "$JS_FILE" ]; then
+            echo "❌ No WASM/JS artifacts found"
+            exit 1
+          fi
           mkdir -p engine
-          WASM_FILE=$(find chocolate-doom -type f -name "*.wasm" | head -n 1)
-          JS_FILE=$(find chocolate-doom -type f -name "*.js" | head -n 1)
-          if [ -f "$WASM_FILE" ]; then cp "$WASM_FILE" engine/doom.wasm; fi
-          if [ -f "$JS_FILE" ]; then cp "$JS_FILE" engine/doom.js; fi
-          ls -lh engine || true
+          cp "$WASM_FILE" engine/choco.wasm
+          cp "$JS_FILE" engine/choco.js
+          echo "✅ Engine built: $WASM_FILE and $JS_FILE"
 
       - name: Commit updated engine
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add engine/doom.*
-          git commit -m "Update /engine (WASM build)"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add engine/
+          git commit -m "Update WebAssembly engine build" || echo "No changes to commit"
           git push
-        continue-on-error: true
