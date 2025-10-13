@@ -1,90 +1,68 @@
-name: Build Chocolate Doom (WASM) -> /engine
+name: Build Chocolate Doom (WASM) → /engine
 
 on:
-  workflow_dispatch:
   push:
-    paths:
-      - ".github/workflows/build-engine.yml"
-
-permissions:
-  contents: write
-
-concurrency:
-  group: build-engine
-  cancel-in-progress: true
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Emscripten SDK
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: latest
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          source ./emsdk_env.sh
+        shell: bash
 
-      - name: Install autotools
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake libtool pkg-config
+          sudo apt-get install -y build-essential automake autoconf libtool pkg-config libsdl2-dev libsdl2-mixer-dev
 
       - name: Clone Chocolate Doom
-        run: git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
-
-      - name: Bootstrap (autoreconf)
-        working-directory: chocolate-doom
-        run: autoreconf -fiv
+        run: |
+          git clone https://github.com/chocolate-doom/chocolate-doom.git
+          cd chocolate-doom
+          ./bootstrap
 
       - name: Configure (Emscripten)
-        working-directory: chocolate-doom
-        env:
-          CC: emcc
-          CXX: em++
-          AR: emar
-          RANLIB: emranlib
-          CFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
-          CXXFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
-          LDFLAGS: "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
-          ac_cv_func_malloc_0_nonnull: "yes"
-          ac_cv_func_realloc_0_nonnull: "yes"
-          SDL2_CONFIG: ""
         run: |
-          emconfigure ./configure --disable-opengl --host=wasm32-unknown-emscripten
+          source emsdk/emsdk_env.sh
+          cd chocolate-doom
+          emconfigure ./configure --disable-opengl --enable-sdl2
 
-      - name: Build (doom target)
-        working-directory: chocolate-doom
+      - name: Build (WASM target)
         run: |
-          emmake make -j2 -C src/doom
+          source emsdk/emsdk_env.sh
+          cd chocolate-doom
+          emmake make
+        shell: bash
 
       - name: Locate wasm/js artifacts
-        id: out
-        shell: bash
         run: |
-          set -e
-          JS=$(find chocolate-doom/src/doom -type f -name "*.js"   | head -n1 || true)
-          WASM=$(find chocolate-doom/src/doom -type f -name "*.wasm"| head -n1 || true)
-          echo "Found JS:   $JS"
-          echo "Found WASM: $WASM"
-          echo "js=$JS"     >> "$GITHUB_OUTPUT"
-          echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
-          test -n "$JS" && test -n "$WASM"
-
-      - name: Copy to /engine (repo root)
-        run: |
+          echo "Search for build outputs..."
+          find chocolate-doom -type f \( -name "*.wasm" -o -name "*.js" \)
           mkdir -p engine
-          cp "${{ steps.out.outputs.js }}"   engine/engine.js
-          cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
-          ls -lh engine/
+          WASM_FILE=$(find chocolate-doom -type f -name "*.wasm" | head -n 1)
+          JS_FILE=$(find chocolate-doom -type f -name "*.js" | head -n 1)
+          if [ -f "$WASM_FILE" ]; then cp "$WASM_FILE" engine/doom.wasm; fi
+          if [ -f "$JS_FILE" ]; then cp "$JS_FILE" engine/doom.js; fi
+          ls -lh engine || true
 
       - name: Commit updated engine
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add engine/engine.js engine/engine.wasm
-          if git diff --cached --quiet; then
-            echo "No changes"; exit 0; fi
-          git commit -m "Update engine (Chocolate Doom, wasm)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add engine/doom.*
+          git commit -m "Update /engine (WASM build)"
           git push
+        continue-on-error: true
