@@ -1,46 +1,79 @@
 name: Build DOOM Engine (WASM) and Update /engine
+
 on:
   workflow_dispatch:
   push:
     paths:
       - ".github/workflows/build-engine.yml"
 
+# Il workflow deve poter committare su main
+permissions:
+  contents: write
+
+concurrency:
+  group: build-engine
+  cancel-in-progress: true
+
 jobs:
   build-engine:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Emscripten SDK
+      - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
-          actions-cache-key: emsdk-cache
+          no-cache: false
+
+      - name: Show emsdk version (debug)
+        run: emcc -v
 
       - name: Get PrBoom+ sources
         run: |
           git clone --depth=1 https://github.com/coelckers/prboom-plus.git prboom-plus
 
-      - name: Configure (Emscripten CMake)
+      - name: Configure (CMake via emcmake)
         working-directory: prboom-plus
         run: |
-          mkdir build-web && cd build-web
-          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -DOPENGL=OFF -DSDL2=ON
+          mkdir -p build-web
+          cd build-web
+          emcmake cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPENGL=OFF \
+            -DSDL2=ON \
+            -DSDL2_MIXER=ON \
+            -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
+            -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
 
-      - name: Build
+      - name: Build (emmake)
         working-directory: prboom-plus/build-web
-        run: emmake make -j
+        run: emmake make -j 4
 
-      - name: Copy artifacts to /engine
+      - name: Locate build artifacts
+        id: find_outputs
         shell: bash
         run: |
-          WASM=$(find prboom-plus/build-web -name "*.wasm" | head -n1)
-          JS=$(find prboom-plus/build-web -name "*.js"   | head -n1)
-          test -n "$WASM" && test -n "$JS"
+          set -e
+          JS=$(find prboom-plus/build-web -type f -name "*.js"   | head -n1 || true)
+          WASM=$(find prboom-plus/build-web -type f -name "*.wasm"| head -n1 || true)
+          echo "js=$JS"     >> $GITHUB_OUTPUT
+          echo "wasm=$WASM" >> $GITHUB_OUTPUT
+          echo "Found JS:   $JS"
+          echo "Found WASM: $WASM"
+          if [ -z "$JS" ] || [ -z "$WASM" ]; then
+            echo "✗ Build output non trovato (js/wasm). Controlla i log degli step precedenti."
+            exit 1
+          fi
+
+      - name: Copy to /engine (repo root)
+        run: |
           mkdir -p engine
-          cp "$JS"   engine/engine.js
-          cp "$WASM" engine/engine.wasm
+          cp "${{ steps.find_outputs.outputs.js }}"   engine/engine.js
+          cp "${{ steps.find_outputs.outputs.wasm }}" engine/engine.wasm
+          ls -lh engine/
 
       - name: Commit updated engine
         run: |
@@ -48,7 +81,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add engine/engine.js engine/engine.wasm
           if git diff --cached --quiet; then
-            echo "No changes"; exit 0
+            echo "No changes to commit."
+            exit 0
           fi
           git commit -m "chore(engine): auto-build PrBoom wasm"
           git push
