@@ -1,49 +1,115 @@
-name: Build DOOM Engine (Emscripten WASM)
+name: Build DOOM Engine (WASM) → /engine
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_dispatch:        # puoi lanciarlo a mano da Actions
+  push:                     # (ri)costruisci se cambi il workflow
+    paths:
+      - ".github/workflows/build-engine.yml"
+
+# serve per poter fare il commit automatico dei binari
+permissions:
+  contents: write
+
+concurrency:
+  group: build-engine
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Codice del repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2) Emscripten pronto all’uso (niente sorcery con $GITHUB_ENV)
       - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Show emsdk version
         run: |
-          git clone https://github.com/emscripten-core/emsdk.git
-          cd emsdk
-          ./emsdk install latest
-          ./emsdk activate latest
-          echo "source $(pwd)/emsdk_env.sh" >> $GITHUB_ENV
+          emcc -v
+          emcmake -v || true
 
-      - name: Verify Emscripten
-        run: emcc --version
+      # 3) Tool di build (cmake+ninja); NIENTE SDL di sistema (Emscripten usa i ports)
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config
 
+      # 4) Sorgenti motore (Chocolate Doom) – shallow clone
       - name: Clone Chocolate Doom
         run: |
-          git clone https://github.com/chocolate-doom/chocolate-doom.git engine_src
-          cd engine_src
-          autoreconf -i
-          mkdir build && cd build
-          emconfigure ../configure --disable-opengl --disable-sdltest
-          emmake make -j4
+          git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
 
-      - name: Prepare build artifacts
+      # 5) Configure (CMake con toolchain emscripten)
+      #    Forziamo SDL2 via ports e memoria espandibile.
+      - name: Configure (emcmake)
+        working-directory: chocolate-doom
         run: |
+          cmake -E make_directory build-wasm
+          emcmake cmake -S . -B build-wasm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
+            -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
+            -DCMAKE_EXE_LINKER_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
+
+      # 6) Build
+      - name: Build (emmake ninja)
+        working-directory: chocolate-doom
+        run: |
+          emmake ninja -C build-wasm -v
+
+      # 7) Individua gli artefatti giusti:
+      #    prendiamo SEMPRE il .wasm e .js PIÙ GRANDI generati dalla build
+      - name: Locate wasm/js artifacts
+        id: out
+        shell: bash
+        run: |
+          set -e
+          ROOT="chocolate-doom/build-wasm"
+
+          echo "==> Elenco candidati .wasm/.js"
+          find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
+          find "$ROOT" -type f -name "*.js"   -printf "%10s  %p\n" | sort -nr || true
+
+          WASM=$(find "$ROOT" -type f -name "*.wasm" -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+          JS=$(  find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+
+          echo "WASM chosen: $WASM"
+          echo "JS chosen  : $JS"
+
+          if [ -z "$WASM" ] || [ -z "$JS" ]; then
+            echo "❌ Nessun artefatto .wasm/.js trovato. Guarda i log della fase di build."
+            exit 1
+          fi
+
+          echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
+          echo "js=$JS"     >> "$GITHUB_OUTPUT"
+
+      # 8) Copia nel repo come /engine/engine.{js,wasm}
+      - name: Copy to /engine
+        shell: bash
+        run: |
+          set -e
           mkdir -p engine
-          cp engine_src/build/src/chocolate-doom.js engine/engine.js
-          cp engine_src/build/src/chocolate-doom.wasm engine/engine.wasm
+          cp "${{ steps.out.outputs.js }}"   engine/engine.js
+          cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
+          ls -lh engine/
 
-      - name: Commit and push updated engine
+      # 9) Commit automatico
+      - name: Commit updated engine
+        shell: bash
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add engine/engine.js engine/engine.wasm
-          git commit -m "Update WebAssembly engine build"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(engine): build Chocolate Doom WASM"
           git push
