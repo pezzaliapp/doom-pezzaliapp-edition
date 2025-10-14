@@ -17,42 +17,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y git cmake ninja-build python3
 
-      - name: Setup Emscripten
+      - name: Install Emscripten SDK
+        shell: bash
         run: |
+          set -e
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          echo "source $(pwd)/emsdk_env.sh" >> $GITHUB_ENV
+          # Non usiamo $GITHUB_ENV: sourceremo il file nei passi che servono
 
       - name: Clone Chocolate Doom
-        run: |
-          git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
+        run: git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
 
-      - name: Build Chocolate Doom (WASM)
+      - name: Configure + Build (with emsdk active)
+        shell: bash
         run: |
+          set -e
+          source emsdk/emsdk_env.sh
           cd chocolate-doom
-          source ../emsdk/emsdk_env.sh
-          mkdir build
-          cd build
-          emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja
-          emmake ninja
-          echo "✅ Build completata"
+          mkdir -p build && cd build
+          emcmake cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
+            -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
+          emmake ninja -v
+          echo "Build OK"
 
       - name: Copy WASM + JS to /engine
+        shell: bash
         run: |
+          set -e
+          WASM=$(find chocolate-doom/build -type f -name "*.wasm" | sort -nr | head -n1)
+          JS=$(find chocolate-doom/build -type f -name "*.js" | sort -nr | head -n1)
+          echo "Found WASM: $WASM"
+          echo "Found JS  : $JS"
+          test -n "$WASM" && test -n "$JS"
           mkdir -p engine
-          cp chocolate-doom/build/*.wasm engine/ || true
-          cp chocolate-doom/build/*.js engine/ || true
-          echo "📦 Copiati in /engine"
+          cp "$JS"   engine/engine.js
+          cp "$WASM" engine/engine.wasm
+          ls -lh engine/
 
       - name: Commit updated engine
+        shell: bash
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add engine/*.wasm engine/*.js || true
-          git commit -m "Update WASM engine" || echo "No changes to commit"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add engine/engine.js engine/engine.wasm
+          git commit -m "Update WASM engine (Chocolate Doom)" || echo "No changes"
           git push || true
