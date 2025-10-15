@@ -1,6 +1,7 @@
-#include <emscripten.h>
 #include <stdio.h>
+#include <emscripten/emscripten.h>
 
-void DG_WASM_Log(const char *msg) {
-    printf("[WASM] %s\\n", msg);
+EMSCRIPTEN_KEEPALIVE
+void DG_WASM_Log(const char* msg) {
+  printf("[WASM] %s\n", msg ? msg : "(null)");
 }
