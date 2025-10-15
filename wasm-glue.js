@@ -1,75 +1,83 @@
-// wasm-glue.js — compatibile con Emscripten "modularized" e "classic autoboot"
+// wasm-glue.js — robusto + diagnostica a schermo
 (function(){
-  function loadClassicScript(src){
-    return new Promise((resolve, reject)=>{
+  const banner = document.getElementById('banner');
+  const canvas = document.getElementById('screen');
+  const engineBase = new URL('./engine/', location.href);
+
+  function say(t){ if(banner){ banner.hidden=false; banner.textContent=t; } console.log(t); }
+  function ok(){ if(banner){ banner.hidden=true; } }
+  function loadScript(src){
+    return new Promise((res, rej)=>{
       const s = document.createElement('script');
       s.src = src; s.async = true;
-      s.onload = ()=>resolve();
-      s.onerror = e=>reject(e);
+      s.onload = ()=>res();
+      s.onerror = ()=>rej(new Error('Load failed: '+src));
       document.head.appendChild(s);
     });
   }
 
-  async function startClassic(iwadBytes){
-    // PREP: definiamo Module PRIMA di caricare engine.js
-    const canvas = document.getElementById('screen');
-
-    // Emscripten autoboot userà questi campi
+  async function startClassic(iwad){
+    // Emscripten autoboot: serve Module PRIMA di caricare engine.js
     window.Module = {
-      noInitialRun: false,                   // lascia che parta da solo
+      noInitialRun: false,
       canvas,
       print: (t)=>console.log(t),
       printErr: (t)=>console.error(t),
-      locateFile: (path) => path.endsWith('.wasm') ? './engine/engine.wasm' : path,
+      onAbort: (t)=>say('Motore abortito: '+t),
+      locateFile: (p)=> p.endsWith('.wasm')
+          ? new URL('engine.wasm', engineBase).href
+          : p,
       preRun: [(mod)=>{
         try{ mod.FS.mkdir('/data'); }catch{}
-        if (iwadBytes && iwadBytes.length){
-          mod.FS.writeFile('/data/doom1.wad', iwadBytes);
-        }
-        // Passiamo gli argomenti PRIMA dell'avvio
+        if (iwad && iwad.length) mod.FS.writeFile('/data/doom1.wad', iwad);
         mod.arguments = ['-iwad','/data/doom1.wad'];
       }]
     };
-
-    await loadClassicScript('./engine/engine.js'); // questo farà partire il main() da solo
+    say('Carico motore (classic)…');
+    await loadScript(new URL('engine.js', engineBase).href);
+    ok();
   }
 
-  async function startModular(iwadBytes){
-    // Carichiamo lo script che espone createDoomModule
-    await loadClassicScript('./engine/engine.js');
-    if (typeof window.createDoomModule !== 'function') {
-      throw new Error('createDoomModule non trovato (build non modularizzata?)');
-    }
-    const canvas = document.getElementById('screen');
-    const Module = await window.createDoomModule({
+  async function startModular(iwad){
+    say('Carico motore (modular)…');
+    await loadScript(new URL('engine.js', engineBase).href);
+
+    const factory =
+      window.createDoomModule ||
+      window.createModule ||
+      (typeof window.Module === 'function' ? window.Module : null);
+
+    if (!factory) throw new Error('Factory modular non trovata');
+
+    const Module = await factory({
       canvas,
+      noInitialRun: true,
       print: (t)=>console.log(t),
       printErr: (t)=>console.error(t),
-      noInitialRun: true,
-      locateFile: (path) => path.endsWith('.wasm') ? './engine/engine.wasm' : path,
+      onAbort: (t)=>say('Motore abortito: '+t),
+      locateFile: (p)=> p.endsWith('.wasm')
+          ? new URL('engine.wasm', engineBase).href
+          : p,
       preRun: [(mod)=>{
         try{ mod.FS.mkdir('/data'); }catch{}
-        if (iwadBytes && iwadBytes.length){
-          mod.FS.writeFile('/data/doom1.wad', iwadBytes);
-        }
+        if (iwad && iwad.length) mod.FS.writeFile('/data/doom1.wad', iwad);
       }]
     });
+
     const args = ['-iwad','/data/doom1.wad'];
     if (Module.callMain) Module.callMain(args);
     else if (typeof Module._main === 'function') Module._main(args.length, 0);
+    ok();
   }
 
-  const Runner = {
+  window.DoomEngineRunner = {
     async start(iwadBytes){
-      // Prova prima modular, altrimenti classic autoboot
-      try {
-        await startModular(iwadBytes);
-      } catch (e) {
-        console.warn('Modular build non rilevata, passo alla classic:', e.message||e);
+      try { await startModular(iwadBytes); }
+      catch(e){
+        console.warn(e);
+        say('Modular non rilevato ('+(e.message||e)+'), provo classic…');
         await startClassic(iwadBytes);
       }
     }
   };
-
-  window.DoomEngineRunner = Runner;
 })();
