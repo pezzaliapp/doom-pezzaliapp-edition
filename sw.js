@@ -1,5 +1,5 @@
 // sw.js — v4 — PWA app-shell
-const CACHE = 'doom-pezzaliapp-v6'; // nuovo nome
+const CACHE = 'doom-pezzaliapp-v10'; // incrementa il numero
 const SHELL = [
   './',
   './index.html',
