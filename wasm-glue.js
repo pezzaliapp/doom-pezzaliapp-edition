@@ -1,4 +1,4 @@
-// wasm-glue.js — robusto + diagnostica a schermo
+// wasm-glue.js — robusto + diagnostica a schermo per DoomGeneric/emscripten
 (function(){
   const banner = document.getElementById('banner');
   const canvas = document.getElementById('screen');
@@ -17,7 +17,6 @@
   }
 
   async function startClassic(iwad){
-    // Emscripten autoboot: serve Module PRIMA di caricare engine.js
     window.Module = {
       noInitialRun: false,
       canvas,
@@ -25,8 +24,8 @@
       printErr: (t)=>console.error(t),
       onAbort: (t)=>say('Motore abortito: '+t),
       locateFile: (p)=> p.endsWith('.wasm')
-          ? new URL('engine.wasm', engineBase).href
-          : p,
+        ? new URL('engine.wasm', engineBase).href
+        : p,
       preRun: [(mod)=>{
         try{ mod.FS.mkdir('/data'); }catch{}
         if (iwad && iwad.length) mod.FS.writeFile('/data/doom1.wad', iwad);
@@ -41,12 +40,10 @@
   async function startModular(iwad){
     say('Carico motore (modular)…');
     await loadScript(new URL('engine.js', engineBase).href);
-
     const factory =
       window.createDoomModule ||
       window.createModule ||
       (typeof window.Module === 'function' ? window.Module : null);
-
     if (!factory) throw new Error('Factory modular non trovata');
 
     const Module = await factory({
@@ -56,14 +53,13 @@
       printErr: (t)=>console.error(t),
       onAbort: (t)=>say('Motore abortito: '+t),
       locateFile: (p)=> p.endsWith('.wasm')
-          ? new URL('engine.wasm', engineBase).href
-          : p,
+        ? new URL('engine.wasm', engineBase).href
+        : p,
       preRun: [(mod)=>{
         try{ mod.FS.mkdir('/data'); }catch{}
         if (iwad && iwad.length) mod.FS.writeFile('/data/doom1.wad', iwad);
       }]
     });
-
     const args = ['-iwad','/data/doom1.wad'];
     if (Module.callMain) Module.callMain(args);
     else if (typeof Module._main === 'function') Module._main(args.length, 0);
