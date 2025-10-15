@@ -1,4 +1,4 @@
-name: Build Chocolate Doom (WASM) → /engine
+name: Build DoomGeneric (WASM) → /engine
 
 on:
   workflow_dispatch:
@@ -18,71 +18,66 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Codice repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2) Emscripten pronto all'uso
-      - name: Setup Emscripten SDK
+      - name: Setup Emscripten (emsdk)
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
 
-      - name: Show emsdk version (debug)
-        run: emcc -v || true
+      - name: Show Emscripten versions
+        run: |
+          emcc -v || true
+          emcmake -v || true
 
-      # 3) Tool di build
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config
+          sudo apt-get install -y cmake ninja-build python3
 
-      # 4) Sorgenti motore
-      - name: Clone Chocolate Doom
-        run: git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
+      - name: Clone DoomGeneric
+        run: |
+          git clone --depth=1 https://github.com/ozkl/doomgeneric.git doomgeneric
 
-      # 5) Configure (toolchain emscripten)
+      # Configuriamo la variante WASM (usa SDL2 via ports Emscripten)
       - name: Configure (emcmake)
-        working-directory: chocolate-doom
+        working-directory: doomgeneric
         run: |
           cmake -E make_directory build-wasm
           emcmake cmake -S . -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DPLATFORM=WASM \
             -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_EXE_LINKER_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
 
-      # 6) Build: COMPILA proprio l'eseguibile del gioco
       - name: Build (emmake ninja)
-        working-directory: chocolate-doom
+        working-directory: doomgeneric
         run: |
-          emmake ninja -C build-wasm chocolate-doom -v
+          emmake ninja -C build-wasm -v
 
-      # 7) Prendi SOLO gli artefatti del gioco (no mus2mid ecc.)
-      - name: Locate wasm/js artifacts (chocolate-doom only)
+      - name: Locate wasm/js artifacts (doomgeneric)
         id: out
         shell: bash
         run: |
           set -e
-          ROOT="chocolate-doom/build-wasm"
+          ROOT="doomgeneric/build-wasm"
+          echo "== candidate JS =="
+          find "$ROOT" -type f -name "*.js"   -printf "%10s  %p\n" | sort -nr || true
+          echo "== candidate WASM =="
+          find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
 
-          JS=$(find "$ROOT" -type f -name 'chocolate-doom*.js'   | head -n1 || true)
-          WASM=$(find "$ROOT" -type f -name 'chocolate-doom*.wasm'| head -n1 || true)
-
+          JS=$(find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+          WASM=$(find "$ROOT" -type f -name "*.wasm" -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
           if [ -z "$JS" ] || [ -z "$WASM" ]; then
-            echo "Candidati .js:"
-            find "$ROOT" -type f -name "*.js"   -printf "%10s  %p\n" | sort -nr || true
-            echo "Candidati .wasm:"
-            find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
-            echo "❌ Non ho trovato chocolate-doom.{js,wasm}"
+            echo "❌ Nessun .js/.wasm trovato. Controlla i log sopra."
             exit 1
           fi
-
           echo "js=$JS"     >> "$GITHUB_OUTPUT"
           echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
           echo "✅ Selezionati: $JS  /  $WASM"
 
-      # 8) Copia nel repo come /engine/engine.{js,wasm}
       - name: Copy to /engine
         shell: bash
         run: |
@@ -92,7 +87,6 @@ jobs:
           cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
           ls -lh engine/
 
-      # 9) Commit automatico
       - name: Commit updated engine
         shell: bash
         run: |
@@ -103,5 +97,5 @@ jobs:
             echo "No changes to commit."
             exit 0
           fi
-          git commit -m "chore(engine): build Chocolate Doom WASM"
+          git commit -m "chore(engine): build DoomGeneric WASM"
           git push
