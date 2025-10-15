@@ -3,8 +3,10 @@ name: Build DoomGeneric (WASM) → /engine
 on:
   workflow_dispatch:
   push:
+    branches: [ main ]
     paths:
       - ".github/workflows/build-engine.yml"
+      - "doomgeneric/**"
 
 permissions:
   contents: write
@@ -18,9 +20,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Codice del repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2) Emscripten pronto all'uso
       - name: Setup Emscripten (emsdk)
         uses: mymindstorm/setup-emsdk@v14
         with:
@@ -31,23 +35,31 @@ jobs:
           emcc -v || true
           emcmake -v || true
 
+      # 3) Tool di build
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build python3
 
-      - name: Clone DoomGeneric
+      # 4) Verifica presenza progetto doomgeneric nel repo
+      - name: Check doomgeneric project exists
+        shell: bash
         run: |
-          git clone --depth=1 https://github.com/ozkl/doomgeneric.git doomgeneric
+          set -e
+          if [ ! -f doomgeneric/CMakeLists.txt ]; then
+            echo "❌ Manca doomgeneric/CMakeLists.txt nel repo."
+            echo "Aggiungi la cartella doomgeneric/ con i file che ti ho fornito (CMakeLists.txt, doomgeneric.c, doomgeneric_sdl.c, doomgeneric_wasm.c)."
+            exit 1
+          fi
+          echo "✅ Trovato doomgeneric/CMakeLists.txt"
 
-      # Configuriamo la variante WASM (usa SDL2 via ports Emscripten)
+      # 5) Configure (toolchain emscripten) + 6) Build
       - name: Configure (emcmake)
         working-directory: doomgeneric
         run: |
           cmake -E make_directory build-wasm
           emcmake cmake -S . -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DPLATFORM=WASM \
             -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_EXE_LINKER_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
@@ -57,7 +69,8 @@ jobs:
         run: |
           emmake ninja -C build-wasm -v
 
-      - name: Locate wasm/js artifacts (doomgeneric)
+      # 7) Individua i file prodotti
+      - name: Locate wasm/js artifacts (engine only)
         id: out
         shell: bash
         run: |
@@ -68,8 +81,18 @@ jobs:
           echo "== candidate WASM =="
           find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
 
-          JS=$(find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
-          WASM=$(find "$ROOT" -type f -name "*.wasm" -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+          # Preferisci un file che si chiama proprio engine.* (come da CMakeLists che ti ho dato)
+          JS=$(find "$ROOT" -type f -name "engine*.js"   | head -n1 || true)
+          WASM=$(find "$ROOT" -type f -name "engine*.wasm"| head -n1 || true)
+
+          # Fallback: prendi i più grandi se per qualche motivo hanno nomi diversi
+          if [ -z "$JS" ]; then
+            JS=$(find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+          fi
+          if [ -z "$WASM" ]; then
+            WASM=$(find "$ROOT" -type f -name "*.wasm" -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
+          fi
+
           if [ -z "$JS" ] || [ -z "$WASM" ]; then
             echo "❌ Nessun .js/.wasm trovato. Controlla i log sopra."
             exit 1
@@ -78,6 +101,7 @@ jobs:
           echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
           echo "✅ Selezionati: $JS  /  $WASM"
 
+      # 8) Copia nel repo come /engine/engine.{js,wasm}
       - name: Copy to /engine
         shell: bash
         run: |
@@ -87,6 +111,7 @@ jobs:
           cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
           ls -lh engine/
 
+      # 9) Commit automatico
       - name: Commit updated engine
         shell: bash
         run: |
