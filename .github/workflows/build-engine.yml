@@ -1,12 +1,11 @@
-name: Build DOOM Engine (WASM) → /engine
+name: Build Chocolate Doom (WASM) → /engine
 
 on:
-  workflow_dispatch:        # puoi lanciarlo a mano da Actions
-  push:                     # (ri)costruisci se cambi il workflow
+  workflow_dispatch:
+  push:
     paths:
       - ".github/workflows/build-engine.yml"
 
-# serve per poter fare il commit automatico dei binari
 permissions:
   contents: write
 
@@ -19,34 +18,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Codice del repo
+      # 1) Codice repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2) Emscripten pronto all’uso (niente sorcery con $GITHUB_ENV)
+      # 2) Emscripten pronto all'uso
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
 
-      - name: Show emsdk version
-        run: |
-          emcc -v
-          emcmake -v || true
+      - name: Show emsdk version (debug)
+        run: emcc -v || true
 
-      # 3) Tool di build (cmake+ninja); NIENTE SDL di sistema (Emscripten usa i ports)
+      # 3) Tool di build
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config
 
-      # 4) Sorgenti motore (Chocolate Doom) – shallow clone
+      # 4) Sorgenti motore
       - name: Clone Chocolate Doom
-        run: |
-          git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
+        run: git clone --depth=1 https://github.com/chocolate-doom/chocolate-doom.git
 
-      # 5) Configure (CMake con toolchain emscripten)
-      #    Forziamo SDL2 via ports e memoria espandibile.
+      # 5) Configure (toolchain emscripten)
       - name: Configure (emcmake)
         working-directory: chocolate-doom
         run: |
@@ -57,38 +52,35 @@ jobs:
             -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_EXE_LINKER_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
 
-      # 6) Build
+      # 6) Build: COMPILA proprio l'eseguibile del gioco
       - name: Build (emmake ninja)
         working-directory: chocolate-doom
         run: |
-          emmake ninja -C build-wasm -v
+          emmake ninja -C build-wasm chocolate-doom -v
 
-      # 7) Individua gli artefatti giusti:
-      #    prendiamo SEMPRE il .wasm e .js PIÙ GRANDI generati dalla build
-      - name: Locate wasm/js artifacts
+      # 7) Prendi SOLO gli artefatti del gioco (no mus2mid ecc.)
+      - name: Locate wasm/js artifacts (chocolate-doom only)
         id: out
         shell: bash
         run: |
           set -e
           ROOT="chocolate-doom/build-wasm"
 
-          echo "==> Elenco candidati .wasm/.js"
-          find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
-          find "$ROOT" -type f -name "*.js"   -printf "%10s  %p\n" | sort -nr || true
+          JS=$(find "$ROOT" -type f -name 'chocolate-doom*.js'   | head -n1 || true)
+          WASM=$(find "$ROOT" -type f -name 'chocolate-doom*.wasm'| head -n1 || true)
 
-          WASM=$(find "$ROOT" -type f -name "*.wasm" -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
-          JS=$(  find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
-
-          echo "WASM chosen: $WASM"
-          echo "JS chosen  : $JS"
-
-          if [ -z "$WASM" ] || [ -z "$JS" ]; then
-            echo "❌ Nessun artefatto .wasm/.js trovato. Guarda i log della fase di build."
+          if [ -z "$JS" ] || [ -z "$WASM" ]; then
+            echo "Candidati .js:"
+            find "$ROOT" -type f -name "*.js"   -printf "%10s  %p\n" | sort -nr || true
+            echo "Candidati .wasm:"
+            find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
+            echo "❌ Non ho trovato chocolate-doom.{js,wasm}"
             exit 1
           fi
 
-          echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
           echo "js=$JS"     >> "$GITHUB_OUTPUT"
+          echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
+          echo "✅ Selezionati: $JS  /  $WASM"
 
       # 8) Copia nel repo come /engine/engine.{js,wasm}
       - name: Copy to /engine
