@@ -1,20 +1,18 @@
 cmake_minimum_required(VERSION 3.10)
 project(DoomGenericWASM C)
 
-# Imposta l’output in formato WebAssembly
-set(CMAKE_EXECUTABLE_SUFFIX ".html")
-
-# File sorgenti principali
+# Sorgenti del mini-motore di test
 set(SOURCES
   doomgeneric.c
   doomgeneric_sdl.c
   doomgeneric_wasm.c
 )
 
-# Aggiungi eseguibile WebAssembly
+# Output: "engine" (Emscripten genererà engine.js + engine.wasm)
 add_executable(engine ${SOURCES})
 
-# Opzioni per Emscripten
+# Opzioni per Emscripten (SDL2 via ports, memoria che cresce, FS attivo)
 set_target_properties(engine PROPERTIES
-  LINK_FLAGS "-s USE_SDL=2 -s ALLOW_MEMORY_GROWTH=1 -s WASM=1 -s FORCE_FILESYSTEM=1 -s EXPORTED_FUNCTIONS=['_main']"
+  COMPILE_OPTIONS "-sUSE_SDL=2;-sALLOW_MEMORY_GROWTH=1"
+  LINK_FLAGS "-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1 -sWASM=1 -sFORCE_FILESYSTEM=1 -sEXIT_RUNTIME=0"
 )
