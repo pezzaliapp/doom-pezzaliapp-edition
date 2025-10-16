@@ -48,22 +48,24 @@ jobs:
           set -e
           if [ ! -f doomgeneric/CMakeLists.txt ]; then
             echo "❌ Manca doomgeneric/CMakeLists.txt nel repo."
-            echo "Aggiungi la cartella doomgeneric/ con i file che ti ho fornito (CMakeLists.txt, doomgeneric.c, doomgeneric_sdl.c, doomgeneric_wasm.c)."
+            echo "Aggiungi la cartella doomgeneric/ con i file (CMakeLists.txt, doomgeneric.c, doomgeneric_sdl.c, doomgeneric_wasm.c)."
             exit 1
           fi
           echo "✅ Trovato doomgeneric/CMakeLists.txt"
 
-      # 5) Configure (toolchain emscripten) + 6) Build
+      # 5) Configure (toolchain emscripten)
       - name: Configure (emcmake)
         working-directory: doomgeneric
         run: |
           cmake -E make_directory build-wasm
           emcmake cmake -S . -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DPLATFORM=WASM \
             -DCMAKE_C_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_CXX_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1" \
             -DCMAKE_EXE_LINKER_FLAGS="-sUSE_SDL=2 -sALLOW_MEMORY_GROWTH=1"
 
+      # 6) Build
       - name: Build (emmake ninja)
         working-directory: doomgeneric
         run: |
@@ -81,11 +83,11 @@ jobs:
           echo "== candidate WASM =="
           find "$ROOT" -type f -name "*.wasm" -printf "%10s  %p\n" | sort -nr || true
 
-          # Preferisci un file che si chiama proprio engine.* (come da CMakeLists che ti ho dato)
+          # Preferisci engine.* se presente
           JS=$(find "$ROOT" -type f -name "engine*.js"   | head -n1 || true)
           WASM=$(find "$ROOT" -type f -name "engine*.wasm"| head -n1 || true)
 
-          # Fallback: prendi i più grandi se per qualche motivo hanno nomi diversi
+          # Fallback: prendi i più grandi
           if [ -z "$JS" ]; then
             JS=$(find "$ROOT" -type f -name "*.js"   -printf "%s %p\n" | sort -nr | awk 'NR==1{print $2}')
           fi
@@ -94,12 +96,22 @@ jobs:
           fi
 
           if [ -z "$JS" ] || [ -z "$WASM" ]; then
-            echo "❌ Nessun .js/.wasm trovato. Controlla i log sopra."
+            echo "❌ Nessun .js/.wasm trovato sotto $ROOT"
             exit 1
           fi
           echo "js=$JS"     >> "$GITHUB_OUTPUT"
           echo "wasm=$WASM" >> "$GITHUB_OUTPUT"
-          echo "✅ Selezionati: $JS  /  $WASM"
+          echo "✅ Selezionati:"
+          ls -lh "$JS" "$WASM"
+
+      # (Facoltativo) Salva gli artefatti di build per debug
+      - name: Upload raw build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-wasm-output
+          path: doomgeneric/build-wasm/**/*.*
+          if-no-files-found: ignore
+          retention-days: 7
 
       # 8) Copia nel repo come /engine/engine.{js,wasm}
       - name: Copy to /engine
@@ -109,6 +121,7 @@ jobs:
           mkdir -p engine
           cp "${{ steps.out.outputs.js }}"   engine/engine.js
           cp "${{ steps.out.outputs.wasm }}" engine/engine.wasm
+          echo "📦 Contenuto /engine:"
           ls -lh engine/
 
       # 9) Commit automatico
