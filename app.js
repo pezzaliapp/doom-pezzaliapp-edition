@@ -1,30 +1,35 @@
-// app.js — loader WAD + touch overlay + start engine
+// app.js — robust loader WAD (locale + freedoom share) + touch overlay + start engine
 
 // ---- DOM refs ----
-const canvas       = document.getElementById('screen');
-const wadInput     = document.getElementById('wadInput');
-const btnShareware = document.getElementById('loadShareware');
-const btnStart     = document.getElementById('btnStart');
-const banner       = document.getElementById('banner');
-const btnInstall   = document.getElementById('btnInstall');
+const canvas             = document.getElementById('screen');
+const wadInput           = document.getElementById('wadInput');
+const btnShareware       = document.getElementById('loadShareware');
+const btnFreedoomLocal   = document.getElementById('btnFreedoomLocal'); // <- aggiunto
+const btnStart           = document.getElementById('btnStart');
+const banner             = document.getElementById('banner');
+const btnInstall         = document.getElementById('btnInstall');
 
 // ---- Helpers banner ----
-function showWarn(msg){ if (banner){ banner.hidden = false; banner.textContent = msg; } console.log(msg); }
+function showWarn(msg){ if (banner){ banner.hidden = false; banner.textContent = msg; } console.log('[WAD]', msg); }
 function hideWarn(){ if (banner) banner.hidden = true; }
 
 // ---- Storage (OPFS -> Cache) ----
 const hasOPFS = !!(navigator.storage && navigator.storage.getDirectory);
 
 async function saveWad(name, bytes){
-  if (hasOPFS) {
-    const root = await navigator.storage.getDirectory();
-    const fh = await root.getFileHandle(name, { create:true });
-    const w = await fh.createWritable();
-    await w.write(bytes);
-    await w.close();
-  } else {
-    const cache = await caches.open('doom-data');
-    await cache.put(new Request(name), new Response(new Blob([bytes])));
+  try{
+    if (hasOPFS) {
+      const root = await navigator.storage.getDirectory();
+      const fh = await root.getFileHandle(name, { create:true });
+      const w = await fh.createWritable();
+      await w.write(bytes);
+      await w.close();
+    } else {
+      const cache = await caches.open('doom-data');
+      await cache.put(new Request(name), new Response(new Blob([bytes])));
+    }
+  }catch(e){
+    console.warn('[WAD] saveWad fallito:', e);
   }
 }
 async function loadWad(name){
@@ -36,7 +41,7 @@ async function loadWad(name){
   } else {
     const cache = await caches.open('doom-data');
     const resp = await cache.match(name);
-    if (!resp) throw new Error('WAD non trovato');
+    if (!resp) throw new Error('WAD non trovato in cache');
     return new Uint8Array(await resp.arrayBuffer());
   }
 }
@@ -44,16 +49,30 @@ async function loadWad(name){
 // ---- WAD in memoria da avviare ----
 let iwadBuffer = null;
 
+// ---- Fetch robusto con cache-bust + controllo dimensione ----
+async function fetchBytes(url){
+  // busta la cache del SW/rete
+  const bust = url.includes('?') ? `${url}&cb=${Date.now()}` : `${url}?cb=${Date.now()}`;
+  const resp = await fetch(bust, { cache: 'no-store', mode: 'cors' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} su ${url}`);
+  const buf = new Uint8Array(await resp.arrayBuffer());
+  const len = buf.length;
+  console.log('[WAD] scaricato', url, 'bytes=', len);
+  // se è minuscolo, è quasi certamente un SW/placeholder o un errore
+  if (len < 64 * 1024) throw new Error(`File troppo piccolo (${len} B): controlla URL o Service Worker`);
+  return buf;
+}
+
 // ---- Start Engine ----
 async function startGame(){
   hideWarn();
 
   if (!iwadBuffer){
-    showWarn('Carica prima un file WAD (doom1.wad o Freedoom).');
+    showWarn('Carica prima un file WAD (doom1.wad / Freedoom).');
     return;
   }
   if (!window.DoomEngineRunner){
-    showWarn('Motore non pronto. Controlla che /engine/engine.js e /engine/engine.wasm esistano e fai Hard Reload.');
+    showWarn('Motore non pronto. Verifica /engine/engine.js e /engine/engine.wasm, poi Hard Reload.');
     return;
   }
   try{
@@ -61,29 +80,49 @@ async function startGame(){
     await window.DoomEngineRunner.start(iwadBuffer);
     hideWarn();
   }catch(e){
+    console.error(e);
     showWarn('Errore avvio engine: ' + (e?.message || e));
   }
 }
 
-// ---- File chooser ----
+// ---- File locale: avvio immediato, salvataggio in background ----
 wadInput?.addEventListener('change', async e=>{
   const file = e.target.files?.[0];
   if (!file) return;
   try{
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const name = file.name.toLowerCase().endsWith('.wad') ? file.name : 'doom1.wad';
-    await saveWad(name, bytes);
-    iwadBuffer = await loadWad(name);
+    iwadBuffer = bytes;                // ✅ subito in RAM
     btnStart.disabled = false;
-    hideWarn();
+    showWarn(`WAD locale caricato (${(bytes.length/1048576).toFixed(1)} MB). Premi "Avvia".`);
+    // salva best-effort per offline
+    saveWad('doom1.wad', bytes).catch(()=>{});
   }catch(err){
-    showWarn('Errore lettura WAD: '+(err?.message||err));
+    console.error(err);
+    showWarn('Errore lettura WAD locale: '+(err?.message||err));
   }
 });
 
-// ---- Shareware button: scarica un WAD libero ----
+// ---- Freedoom (stesso dominio) ----
+const LOCAL_FREEDOOM_URL = './freedoom/freedoom1.wad';
+async function loadFreedoomLocal(){
+  hideWarn();
+  try{
+    showWarn('Carico Freedoom locale…');
+    const bytes = await fetchBytes(LOCAL_FREEDOOM_URL);
+    iwadBuffer = bytes;                // ✅ subito in RAM
+    btnStart.disabled = false;
+    showWarn(`Freedoom locale caricato (${(bytes.length/1048576).toFixed(1)} MB). Premi "Avvia".`);
+    saveWad('doom1.wad', bytes).catch(()=>{});
+  }catch(e){
+    console.error(e);
+    showWarn('Impossibile caricare Freedoom locale: ' + (e?.message || e));
+  }
+}
+btnFreedoomLocal?.addEventListener('click', loadFreedoomLocal);
+
+// ---- Freedoom share (mirrors affidabili + fallback DOOM shareware) ----
 btnShareware?.addEventListener('click', async ()=>{
-  // 1° tentativo: Freedoom (open source); 2° fallback: Doom1 shareware
+  // Ordine: Freedoom release → Freedoom mirror → DOOM shareware
   const urls = [
     'https://github.com/freedoom/freedoom/releases/latest/download/freedoom1.wad',
     'https://freedoom.soulsphere.org/freedoom1.wad',
@@ -93,13 +132,12 @@ btnShareware?.addEventListener('click', async ()=>{
   for (const url of urls){
     try{
       showWarn('Scarico WAD: ' + url);
-      const res = await fetch(url, { mode:'cors' });
-      if (!res.ok) throw new Error('HTTP '+res.status);
-      const buf = new Uint8Array(await res.arrayBuffer());
-      await saveWad('doom1.wad', buf);
-      iwadBuffer = await loadWad('doom1.wad');
+      const buf = await fetchBytes(url);
+      iwadBuffer = buf;                // ✅ subito in RAM
       btnStart.disabled = false;
-      hideWarn();
+      showWarn(`WAD scaricato (${(buf.length/1048576).toFixed(1)} MB). Premi "Avvia".`);
+      // salva per offline in background
+      saveWad('doom1.wad', buf).catch(()=>{});
       ok = true;
       break;
     }catch(e){
@@ -181,4 +219,4 @@ document.querySelectorAll('.btn[data-key]').forEach(b=>{
 });
 
 // Messaggio iniziale
-showWarn('Pronto. Carica un WAD o premi “Usa WAD shareware”, poi Avvia.');
+showWarn('Pronto. Carica un WAD, oppure “Usa Freedoom locale / share”, poi Avvia.');
